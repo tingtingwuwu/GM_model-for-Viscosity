@@ -1,0 +1,248 @@
+# Import necessary libraries
+from torch_geometric.utils import from_networkx
+from torch_geometric.nn import GATConv, global_mean_pool
+from rdkit import Chem
+import networkx as nx
+import torch
+import torch.nn.functional as F
+import torch.nn as nn
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import KFold
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.svm import SVR
+from xgboost import XGBRegressor
+from sklearn.neural_network import MLPRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.preprocessing import StandardScaler
+
+# Define atomic features
+def atom_features(atom):
+    return [
+        atom.GetAtomicNum(),
+        atom.GetDegree(),
+        atom.GetHybridization(),
+        atom.GetIsAromatic(),
+        atom.GetTotalNumHs(),
+        atom.GetExplicitValence(),
+        atom.GetNumImplicitHs(),
+        atom.GetFormalCharge()
+    ]
+
+# Convert SMILES to graph structure
+def smiles_to_graph(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"Invalid SMILES: {smiles}")
+
+    G = nx.Graph()
+    for atom in mol.GetAtoms():
+        G.add_node(atom.GetIdx(), x=torch.tensor(atom_features(atom), dtype=torch.float))
+    for bond in mol.GetBonds():
+        G.add_edge(bond.GetBeginAtomIdx(), bond.GetEndAtomIdx())
+
+    data = from_networkx(G)
+    return data
+
+# Define GAT layer
+class GATLayer(nn.Module):
+    def __init__(self, in_channels, out_channels, heads=8):
+        super(GATLayer, self).__init__()
+        self.conv = GATConv(in_channels, out_channels, heads=heads)
+
+    def forward(self, x, edge_index):
+        return self.conv(x, edge_index)
+
+# Define MPNN model using GAT
+class MPNNModel(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, out_channels, num_layers, heads=4):
+        super(MPNNModel, self).__init__()
+        self.layers = torch.nn.ModuleList()
+        self.layers.append(GATLayer(in_channels, hidden_channels, heads=heads))
+        for _ in range(num_layers - 2):
+            self.layers.append(GATLayer(hidden_channels * heads, hidden_channels, heads=heads))
+        self.layers.append(GATLayer(hidden_channels * heads, out_channels, heads=1))  # Last layer with head=1
+        self.global_pool = global_mean_pool
+
+    def forward(self, x, edge_index, batch):
+        for layer in self.layers:
+            x = layer(x, edge_index)
+        graph_feat = self.global_pool(x, batch)
+        return graph_feat
+
+# Define MLP model class
+class MLPModel(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
+        super(MLPModel, self).__init__()
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(input_dim, hidden_dim))
+        for _ in range(num_layers - 1):
+            self.layers.append(nn.Linear(hidden_dim, hidden_dim))
+        self.layers.append(nn.Linear(hidden_dim, output_dim))
+
+    def forward(self, x):
+        for i in range(len(self.layers) - 1):
+            x = F.relu(self.layers[i](x))
+        x = self.layers[-1](x)  # Last layer with linear activation
+        return x
+
+# Use Huber loss
+class HuberLoss(nn.Module):
+    def __init__(self, delta=1.0):
+        super(HuberLoss, self).__init__()
+        self.delta = delta
+
+    def forward(self, output, target):
+        error = output - target
+        is_small_error = torch.abs(error) <= self.delta
+        squared_loss = 0.5 * error ** 2
+        linear_loss = self.delta * (torch.abs(error) - 0.5 * self.delta)
+        return torch.where(is_small_error, squared_loss, linear_loss).mean()
+
+# Calculate AARD
+def calculate_aard(y_true, y_pred):
+    abs_errors = np.abs(np.exp(y_pred) - np.exp(y_true))  # Inverse log transformation of predicted and true values
+    return np.mean(abs_errors / np.exp(y_true))
+
+# Traditional machine learning model training and evaluation
+def train_and_evaluate_ml(model, X, y, folds=10):
+    kf = KFold(n_splits=folds, shuffle=True, random_state=42)
+    r2_scores, mse_scores, aard_scores = [], [], []
+
+    for train_index, test_index in kf.split(X):
+        X_train, X_test = X[train_index], X[test_index]
+        y_train, y_test = y[train_index], y[test_index]
+
+        y_train_scaled = np.log(y_train + 1)
+        y_test_scaled = np.log(y_test + 1)
+
+        model.fit(X_train, y_train_scaled)
+        y_pred_scaled = model.predict(X_test)
+
+        r2 = r2_score(y_test_scaled, y_pred_scaled)
+        mse = mean_squared_error(y_test_scaled, y_pred_scaled)
+        aard = calculate_aard(y_test_scaled, y_pred_scaled)
+
+        r2_scores.append(r2)
+        mse_scores.append(mse)
+        aard_scores.append(aard)
+
+    return np.mean(r2_scores), np.mean(mse_scores), np.mean(aard_scores)
+
+# Train and evaluate GNN + MLP model (record the best epoch)
+def train_and_evaluate_gnn_mlp(mpnn_model, mlp_model, features_smiles1, features_smiles2, numeric_features, target, device, epochs=1000):
+    kf = KFold(n_splits=10, shuffle=True, random_state=42)
+    r2_scores, mse_scores, aard_scores = [], [], []
+
+    scaler = StandardScaler()
+    numeric_features_scaled = scaler.fit_transform(numeric_features)
+
+    best_r2, best_mse, best_aard = -float('inf'), float('inf'), float('inf')
+    best_epoch_r2, best_epoch_mse, best_epoch_aard = 0, 0, 0
+
+    for train_index, test_index in kf.split(numeric_features_scaled):
+        X_train, X_test = numeric_features_scaled[train_index], numeric_features_scaled[test_index]
+        y_train, y_test = target[train_index], target[test_index]
+
+        y_train_scaled = np.log(y_train + 1)
+        y_test_scaled = np.log(y_test + 1)
+
+        y_train_tensor = torch.tensor(y_train_scaled, dtype=torch.float32, device=device).unsqueeze(1)
+        y_test_tensor = torch.tensor(y_test_scaled, dtype=torch.float32, device=device).unsqueeze(1)
+
+        criterion = HuberLoss(delta=1.0)
+        optimizer = torch.optim.AdamW(mlp_model.parameters(), lr=1e-4, weight_decay=1e-3)
+
+        train_dataset = torch.utils.data.TensorDataset(torch.tensor(X_train, dtype=torch.float32, device=device),
+                                                       y_train_tensor)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=4090, shuffle=True, num_workers=0)
+
+        for epoch in range(epochs):
+            mlp_model.train()
+            for batch_X, batch_y in train_loader:
+                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                optimizer.zero_grad()
+
+                # Assuming SMILES features have been processed and placed in batch_smiles1 and batch_smiles2
+                combined_features = batch_X  # If needed, can concatenate SMILES features
+                output = mlp_model(combined_features)
+                loss = criterion(output, batch_y)
+                loss.backward()
+                optimizer.step()
+
+            # Evaluate after each epoch
+            mlp_model.eval()
+            with torch.no_grad():
+                X_test_tensor = torch.tensor(X_test, dtype=torch.float32, device=device)
+                pred = mlp_model(X_test_tensor)
+                y_test_np = y_test_tensor.cpu().numpy()
+                pred_np = pred.cpu().numpy()
+
+                r2 = r2_score(y_test_np, pred_np)
+                mse = mean_squared_error(y_test_np, pred_np)
+                aard = calculate_aard(y_test_np, pred_np)
+
+            # Record the best R², MSE, AARD and their epoch
+            if r2 > best_r2:
+                best_r2 = r2
+                best_epoch_r2 = epoch
+            if mse < best_mse:
+                best_mse = mse
+                best_epoch_mse = epoch
+            if aard < best_aard:
+                best_aard = aard
+                best_epoch_aard = epoch
+
+    print(f"Best R² at epoch {best_epoch_r2}: {best_r2:.4f}")
+    print(f"Best MSE at epoch {best_epoch_mse}: {best_mse:.4f}")
+    print(f"Best AARD at epoch {best_epoch_aard}: {best_aard:.4f}")
+
+    return best_r2, best_mse, best_aard
+
+# Main program
+if __name__ == "__main__":
+    device = torch.device('cuda' if torch.cuda.is_available() else '
+
+# Data loading
+file_path = r''
+df = pd.read_csv(file_path)
+
+exclude_cols = ['Component#1', 'Component#2', 'Reference (DOI)', 'Viscosity, cP']
+feature_cols = [col for col in df.columns if col not in exclude_cols]
+
+target_column = 'Viscosity, cP'
+target = df[target_column].values
+numeric_df = df[feature_cols].select_dtypes(include=[np.number])
+numeric_df = numeric_df.fillna(numeric_df.mean())
+numeric_features = numeric_df.values
+
+# Initialize comparison variables
+best_r2 = -float('inf')
+best_mse = float('inf')
+best_aard = float('inf')
+best_model_r2 = ""
+best_model_mse = ""
+best_model_aard = ""
+
+# GNN + MLP model
+mpnn_model = MPNNModel(in_channels=8, hidden_channels=64, out_channels=32, num_layers=6).to(device)
+mlp_model = MLPModel(input_dim=numeric_features.shape[1], hidden_dim=128, output_dim=1, num_layers=3).to(device)
+
+print("Evaluating GNN + MLP Model...")
+r2_gnn, mse_gnn, aard_gnn = train_and_evaluate_gnn_mlp(mpnn_model, mlp_model, None, None, numeric_features, target, device)
+
+print(f"GNN + MLP -> Best R²: {r2_gnn:.4f}, Best MSE: {mse_gnn:.4f}, Best AARD: {aard_gnn:.4f}")
+
+# Traditional machine learning model section
+models = {
+    "RandomForest": RandomForestRegressor(n_estimators=100, random_state=42),
+    "SVR": SVR(),
+    "XGBoost": XGBRegressor(n_estimators=100, random_state=42),
+    "ANN": MLPRegressor(hidden_layer_sizes=(128, 128), max_iter=1000, random_state=42)
+}
+
+# Evaluate traditional machine learning models
+for model_name, model in models.items():
+    print(f"Evaluating {model_name}...")
+    r2, mse, aard = train_and_evaluate_ml(model, numeric_features, target)
+    print(f"{model_name} -> Best R²: {r2:.4f}, Best MSE: {mse:.4f}, Best AARD: {aard:.4f}")

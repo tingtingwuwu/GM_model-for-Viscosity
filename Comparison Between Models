@@ -130,7 +130,7 @@ def train_and_evaluate_ml(model, X, y, folds=10):
     return np.mean(r2_scores), np.mean(mse_scores), np.mean(aard_scores)
 
 # Train and evaluate GNN + MLP model (record the best epoch)
-def train_and_evaluate_gnn_mlp(mpnn_model, mlp_model, features_smiles1, features_smiles2, numeric_features, target, device, epochs=1000):
+def train_and_evaluate_gnn_mlp(mpnn_model, mlp_model, features_smiles1, features_smiles2, numeric_features, target, device, epochs=5000):
     kf = KFold(n_splits=10, shuffle=True, random_state=42)
     r2_scores, mse_scores, aard_scores = [], [], []
 

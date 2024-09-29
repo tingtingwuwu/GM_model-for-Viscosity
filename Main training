@@ -94,7 +94,7 @@ def ensemble_predictions(models, features):
         predictions[:, i] = model.predict(features)
     return np.mean(predictions, axis=1)
 
-def train_and_evaluate(mpnn_model, mlp_model, features_smiles1, features_smiles2, numeric_features, target, device, epochs=2000):
+def train_and_evaluate(mpnn_model, mlp_model, features_smiles1, features_smiles2, numeric_features, target, device, epochs=5000):
     y_scaled = np.log(target + 1)
     scaler = StandardScaler()
     numeric_features_scaled = scaler.fit_transform(numeric_features)

@@ -1,0 +1,86 @@
+import pandas as pd
+import requests
+import concurrent.futures
+import time
+from urllib.parse import quote
+
+# Input and output file paths
+input_file_path = r' '  # The file you uploaded
+output_file_path = r' '
+
+# API base URLs
+pubchem_base_url = ' ' 
+chemspider_base_url = ' '   # Replace with your API key
+
+# Cache dictionary to store already queried compound SMILES
+cache = {}
+
+# Read data from the CSV file
+df = pd.read_csv(input_file_path)
+
+# Ensure the presence of Component#1 and Component#2 columns
+compound_names_1 = df['Component#1']  # Get the Component#1 column
+compound_names_2 = df['Component#2']  # Get the Component#2 column
+
+# Define a function to get PubChem's SMILES string
+def get_pubchem_smiles(name, retry_count=3, delay=1):
+    if name in cache:
+        return cache[name]
+
+    name_encoded = quote(name)  # URL encode the compound name
+
+    for attempt in range(retry_count):
+        try:
+            response = requests.get(pubchem_base_url.format(name_encoded), timeout=5)
+            if response.status_code == 200:
+                smiles = response.text.split('\n')[1].split(',')[1]
+                cache[name] = smiles  # Save the result to the cache
+                return smiles
+            else:
+                print(f"Error fetching SMILES for {name}: HTTP Status {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching SMILES for {name}: {e}")
+            time.sleep(delay)  # Wait and retry
+    return 'Not Found'
+
+# Define a function to get ChemSpider's SMILES string (as a backup)
+def get_chemspider_smiles(name):
+    try:
+        response = requests.get(chemspider_base_url.format(quote(name)))
+        if response.status_code == 200:
+            # Parse the result from ChemSpider (you need to process according to the API's returned data format)
+            # Assume the API returns SMILES data, you need to parse it here
+            smiles = 'ChemSpider_Smiles_Placeholder'  # You need to parse the returned result here
+            cache[name] = smiles
+            return smiles
+        else:
+            print(f"Error fetching SMILES for {name} from ChemSpider: HTTP Status {response.status_code}")
+    except Exception as e:
+        print(f"Error fetching SMILES for {name} from ChemSpider: {e}")
+    return 'Not Found'
+
+# Define a function to get SMILES, first try PubChem, if it fails then try ChemSpider
+def get_smiles(name):
+    smiles = get_pubchem_smiles(name)
+    if smiles == 'Not Found':
+        print(f"Trying ChemSpider for {name}...")
+        smiles = get_chemspider_smiles(name)
+    return smiles
+
+# Use parallel processing to get SMILES
+def fetch_smiles(names):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:  # Limit the number of concurrent threads
+        smiles = list(executor.map(get_smiles, names))
+    return smiles
+
+# Get the SMILES strings for Component#1 and Component#2
+smiles_list_1 = fetch_smiles(compound_names_1)
+smiles_list_2 = fetch_smiles(compound_names_2)
+
+# Add the SMILES strings to new columns
+df['Component#1_SMILES'] = smiles_list_1
+df['Component#2_SMILES'] = smiles_list_2
+
+df.to_csv(output_file_path, index=False)
+
+print("Processing complete, SMILES information has been written to the new file.")

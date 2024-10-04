@@ -56,8 +56,9 @@ Ensure the dataset is prepared and the correct file path is specified.
 Run the following command to start training and evaluation:
 ```bash
 python main.py
-By default, the training process uses 10-fold cross-validation. During each epoch, the R² score, mean squared error (MSE), and average absolute relative deviation (AARD) for both the training and validation sets will be calculated. The model’s predictions and evaluation metrics will be output every 100 epochs.
 ```
+By default, the training process uses 10-fold cross-validation. During each epoch, the R² score, mean squared error (MSE), and average absolute relative deviation (AARD) for both the training and validation sets will be calculated. The model’s predictions and evaluation metrics will be output every 100 epochs.
+
 
 4. Feature Extraction and Caching
 The code implements a feature extraction and caching mechanism based on the graph neural network to extract features from molecular graphs. To avoid redundant calculations, the extracted features will be cached after the first run, improving the efficiency of subsequent training processes.

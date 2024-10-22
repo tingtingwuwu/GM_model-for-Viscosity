@@ -2,7 +2,7 @@
 
 This project implements an integrated model combining Graph Neural Networks (GNN) and Multi-Layer Perceptrons (MLP) for predicting molecular physical and chemical properties, specifically viscosity data. To ensure consistency and reproducibility of the experiments, the following is a detailed guide to using the code, including the hardware and software configurations used in the experimental setup.
 
-## 1. Environment Requirements
+1. Environment Requirements
 
 Before using this project, ensure that your system and libraries are configured as follows to guarantee reproducibility and consistency of results.
 

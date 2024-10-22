@@ -31,7 +31,7 @@ pip install pandas==2.2.3 numpy==1.26.4 scikit-learn==1.0.2 matplotlib==3.9.2
 pip install torch-geometric networkx==3.2.1 rdkit-pypi==2024.03.5 shap==0.31.0
 ```
 
-2. Dataset Preparation
+### 2. Dataset Preparation
 Before running the model for training and prediction, you need to prepare a dataset containing molecular SMILES strings and corresponding numerical features. The dataset should be in CSV format with the following columns:
 
 Component#1_SMILES: Representing the SMILES string of the first molecule.
@@ -44,7 +44,7 @@ Specify the file path of your dataset in the main script, for example:
 file_path = "path_to_your_dataset.csv"
 ```
 
-3. Model Training and Evaluation
+### 3. Model Training and Evaluation
 The main components of the model include:
 
 Graph Neural Networks (GNN): Utilizing the molecular structure represented by SMILES strings, based on the Graph Attention Network (GAT), to extract features from molecular graphs.
@@ -60,14 +60,14 @@ python main.py
 By default, the training process uses 10-fold cross-validation. During each epoch, the R² score, mean squared error (MSE), and average absolute relative deviation (AARD) for both the training and validation sets will be calculated. The model’s predictions and evaluation metrics will be output every 100 epochs.
 
 
-4. Feature Extraction and Caching
+### 4. Feature Extraction and Caching
 The code implements a feature extraction and caching mechanism based on the graph neural network to extract features from molecular graphs. To avoid redundant calculations, the extracted features will be cached after the first run, improving the efficiency of subsequent training processes.
 
 Instructions:
 
 The extract_features_and_cache function converts each SMILES string into graph data, extracts graph-based representations, and caches the features for later use during model training.
 
-5. Hyperparameter Tuning
+### 5. Hyperparameter Tuning
 The project allows users to adjust the model's hyperparameters according to specific task requirements, including:
 
 Number of GNN Layers: Controlled by the num_layers parameter to define the number of GAT layers.
@@ -76,7 +76,7 @@ Training Epochs: Set the total number of training epochs through the epochs para
 Learning Rate: The default optimizer is AdamW, and the learning rate can be adjusted as needed.
 All these parameters can be modified in the model definition section of the code to ensure the model configuration fits the dataset and specific task requirements.
 
-6. Model Evaluation
+### 6. Model Evaluation
 The best R² score for each fold will be recorded and printed, with the final output being the cross-validation mean R² score as the overall evaluation of the model’s performance. Additionally, the model will output other standard evaluation metrics such as MSE and AARD to provide a comprehensive assessment of prediction accuracy.
 
 This project enables users to accurately predict molecular properties like viscosity by integrating graph neural networks and traditional numerical features. The software and hardware configurations used in the experiment ensure reproducibility of the results. Users can flexibly adjust the model architecture and hyperparameters according to their needs, making it suitable for various regression tasks in chemistry and materials science.
